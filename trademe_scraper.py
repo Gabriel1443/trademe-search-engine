@@ -23,7 +23,13 @@ def clean_text(text:str) -> str:
     return text_str
 
 def clean_img_str(text:str) -> str:
-    return re.search("http.+jpg", text).group(0)
+    return_str = re.search("http.+jpg", text)
+    if not return_str is None:
+        return return_str.group(0)
+    
+    else:
+        return ""
+    # return re.search("http.+jpg", text).group(0)
 
 def map_func_list(text_list:list, func) -> list:
     output = []
@@ -44,8 +50,8 @@ logger = logging.getLogger(__name__)
 class TrademeSearch:
 
     def __init__(self, search_strings, proxies = None):
-        search_strings = ["makeup", "container"]
         search_string = "+".join(search_strings)
+        self.output_filename = "_".join(search_strings) + ".csv"
         self.search_string = search_string
 #         self.user_agent = user_agent
         self.proxies = proxies
@@ -72,6 +78,7 @@ class TrademeSearch:
 
     def _make_url(self, page_n):
         url = "https://www.trademe.co.nz/Browse/SearchResults.aspx?&cid=0&searchType=&searchString={search_string}&x=0&y=0&type=Search&sort_order=&redirectFromAll=False&rptpath=all&rsqid=df688ec6c2424b35a4c85217e34dd87c-009&page={page_n}&user_region=100&user_district=0&generalSearch_keypresses=16&generalSearch_suggested=0&generalSearch_suggestedCategory=&v=List".format(search_string = self.search_string, page_n = page_n)
+        # url = "https://www.trademe.co.nz/Browse/SearchResults.aspx?searchString=slow+cooker&type=Search&searchType=all&user_region=100&user_district=0&generalSearch_keypresses=11&generalSearch_suggested=0&generalSearch_suggestedCategory=&rsqid=c86902522bc14876979fde8500bf44ea-001&v=List"
         return url
         
     def fetch_page_data(
@@ -82,9 +89,15 @@ class TrademeSearch:
         
         url = self._make_url(page_n)
         s = requests.Session()
+
+        if not self.proxies is None:
+            use_proxy = random.choice(self.proxies)
+            logger.debug(f"using proxy: {use_proxy}")
+            s.proxies.update(use_proxy)
+        
         response = self._requests_retry_session(session=s).get(url)
         tree = lxml.html.fromstring(response.text)
-        infos = tree.xpath('//div[@class="supergrid-overlord "]/div[@class = "supergrid-bucket largelist "]/a/div/div[@class="location-wrapper"]/div[@class="info"]')
+        infos = tree.xpath('//div[@class="supergrid-overlord "]/div[@class = "supergrid-bucket largelist "]/a/div/div[@class="location-wrapper"]/div[@class="info" or @class="info reserve-not-met"]')
         buynow = []
         bid = []
         for item in infos:
@@ -100,22 +113,40 @@ class TrademeSearch:
             else:
                 bid.append("")
             
-        raw_image = tree.xpath('//div[@class="supergrid-overlord "]/div[@class = "supergrid-bucket largelist "]/a/div/div[@class="image "]/@style')
+        raw_image_element = tree.xpath('//div[@class="supergrid-overlord "]/div[@class = "supergrid-bucket largelist "]/a/div/div[@class="image " or @class="image job-service"]')
+        raw_image = []
+        for item in raw_image_element:
+            raw_image_item = item.xpath("@style")
+            if len(raw_image_item) == 0:
+                raw_image_item = ""
+            else:
+                raw_image_item = raw_image_item[0]
+
+            raw_image.append(raw_image_item)
+
         clean_image = map_func_list(raw_image, clean_img_str)
         raw_location = tree.xpath('//div[@class="supergrid-overlord "]/div[@class = "supergrid-bucket largelist "]/a/div/div[@class="location-wrapper"]/div[@class="location-info"]/div[@class="location"]/text()')
         clean_location = map_func_list(raw_location, clean_text)
-        raw_title = tree.xpath('//div[@class="supergrid-overlord "]/div[@class = "supergrid-bucket largelist "]/a/div/div[@class="location-wrapper"]/div[@class="info"]/div[@class="title"]/text()')
+        raw_title = tree.xpath('//div[@class="supergrid-overlord "]/div[@class = "supergrid-bucket largelist "]/a/div/div[@class="location-wrapper"]/div[@class="info" or @class="info reserve-not-met"]/div[@class="title"]/text()')
         clean_title = map_func_list(raw_title, clean_text)
-
-        df = pd.DataFrame(
-            {
-                "clean_image": clean_image,
-                "clean_location": clean_location,
-                "clean_title": clean_title,
-                "buynow": buynow,
-                "bid": bid,
-            }
-        )
+        try:
+            df = pd.DataFrame(
+                {
+                    "clean_image": clean_image,
+                    "clean_location": clean_location,
+                    "clean_title": clean_title,
+                    "buynow": buynow,
+                    "bid": bid,
+                }
+            )
+        except:
+            logger.info(f"lenght of clean_image: {len(clean_image)}")
+            logger.info(f"lenght of clean_location: {len(clean_location)}")
+            logger.info(f"lenght of clean_title: {len(clean_title)}")
+            logger.info(f"lenght of buynow: {len(buynow)}")
+            logger.info(f"lenght of bid: {len(bid)}")
+            print(self._make_url(page_n))
+            breakpoint()
         
         return df
     
@@ -133,11 +164,13 @@ class TrademeSearch:
         
         df = pd.concat(df_list)
         df = df.reset_index(drop = True)
-        return df
+        df.to_csv(self.output_filename, quoting=csv.QUOTE_ALL, index = True, index_label = "task_n", encoding = 'utf-8-sig',)
+        logger.info(f"{self.output_filename} result saved!")
+        return True
     
 if __name__ == "__main__":
+    proxy_pool = [{'http': 'http://54.206.98.132:3128', 'https': 'http://54.206.98.132:3128'}]
+
     logger.info("Scraping starts!")
-    job = TrademeSearch(["makeup", "container"])
-    df = job.fetch_data()
-    df.to_csv("makeup container.csv", quoting=csv.QUOTE_ALL, index = True, index_label = "task_n", encoding = 'utf-8-sig',)
-    logger.info("Result saved!")
+    job = TrademeSearch(["whisk"], proxies = proxy_pool)
+    job.fetch_data()
