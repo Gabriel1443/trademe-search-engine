@@ -29,7 +29,6 @@ def clean_img_str(text:str) -> str:
     
     else:
         return ""
-    # return re.search("http.+jpg", text).group(0)
 
 def map_func_list(text_list:list, func) -> list:
     output = []
@@ -37,6 +36,24 @@ def map_func_list(text_list:list, func) -> list:
         output.append(func(item))
     
     return output
+
+def search_strings_func(text:str):
+    """process search strings"""
+    search_strings = text.split(" ")
+    if "" in search_strings:
+        search_strings.remove("")
+
+    search_string = "+".join(search_strings)
+    return search_string
+
+def output_strings_func(text:str):
+    """process search strings"""
+    search_strings = text.split(" ")
+    if "" in search_strings:
+        search_strings.remove("")
+
+    search_string = "_".join(search_strings) + ".csv"
+    return search_string
 
 yaml = YAML()
 
@@ -49,10 +66,14 @@ logger = logging.getLogger(__name__)
 
 class TrademeSearch:
 
-    def __init__(self, search_strings, proxies = None):
-        search_string = "+".join(search_strings)
-        self.output_filename = "_".join(search_strings) + ".csv"
-        self.search_string = search_string
+    def __init__(self, search_strings_in, proxies = None, output_path = "."):
+        """ search strings as a list, e.g. ([makeup container, kettle boiler, ...])"""
+        self.output_path = output_path
+        # Create the output folder if not exist
+        if not os.path.exists(output_path):
+            os.makedirs(output_path)
+        self.search_strings = list(map(search_strings_func, search_strings_in))
+        self.output_filename = list(map(output_strings_func, search_strings_in))
 #         self.user_agent = user_agent
         self.proxies = proxies
 
@@ -76,18 +97,18 @@ class TrademeSearch:
         session.mount('https://', adapter)
         return session
 
-    def _make_url(self, page_n):
-        url = "https://www.trademe.co.nz/Browse/SearchResults.aspx?&cid=0&searchType=&searchString={search_string}&x=0&y=0&type=Search&sort_order=&redirectFromAll=False&rptpath=all&rsqid=df688ec6c2424b35a4c85217e34dd87c-009&page={page_n}&user_region=100&user_district=0&generalSearch_keypresses=16&generalSearch_suggested=0&generalSearch_suggestedCategory=&v=List".format(search_string = self.search_string, page_n = page_n)
-        # url = "https://www.trademe.co.nz/Browse/SearchResults.aspx?searchString=slow+cooker&type=Search&searchType=all&user_region=100&user_district=0&generalSearch_keypresses=11&generalSearch_suggested=0&generalSearch_suggestedCategory=&rsqid=c86902522bc14876979fde8500bf44ea-001&v=List"
+    def _make_url(self, search_string, page_n):
+        url = "https://www.trademe.co.nz/Browse/SearchResults.aspx?&cid=0&searchType=&searchString={search_string}&x=0&y=0&type=Search&sort_order=&redirectFromAll=False&rptpath=all&rsqid=92d597f8af834f12a8e93e9f81a5682d-002&page={page_n}&user_region=100&user_district=0&generalSearch_keypresses=17&generalSearch_suggested=0&generalSearch_suggestedCategory=&v=List".format(search_string = search_string, page_n = page_n)
         return url
         
     def fetch_page_data(
             self,
+            search_string,
             page_n = 1,
             max_retries = 20,
         ):
         
-        url = self._make_url(page_n)
+        url = self._make_url(search_string, page_n)
         s = requests.Session()
 
         if not self.proxies is None:
@@ -150,12 +171,14 @@ class TrademeSearch:
         
         return df
     
-    def fetch_data(self):
+    def fetch_data(self, search_string, output_name):
+        """fetch data for a single keyword"""
+        logger.info(f"fetching keyword: {search_string}")
         df_list = []
         page = 1
         while True:
             logger.info(f"fetching page: {page}")
-            temp_df = self.fetch_page_data(page)
+            temp_df = self.fetch_page_data(search_string, page)
             df_list.append(temp_df)
             if temp_df.shape[0] < 60:
                 break
@@ -164,13 +187,68 @@ class TrademeSearch:
         
         df = pd.concat(df_list)
         df = df.reset_index(drop = True)
-        df.to_csv(self.output_filename, quoting=csv.QUOTE_ALL, index = True, index_label = "task_n", encoding = 'utf-8-sig',)
-        logger.info(f"{self.output_filename} result saved!")
+        output_full_path = os.path.join(self.output_path, output_name)
+        df.to_csv(output_full_path, quoting=csv.QUOTE_ALL, index = True, index_label = "task_n", encoding = 'utf-8-sig',)
+        logger.info(f"{output_name} result saved!")
+        return True
+
+    def fetch_all_data(self):
+        """fetch all keywords"""
+        for fetch_info in zip(self.search_strings, self.output_filename):
+            self.fetch_data(fetch_info[0], fetch_info[1])
+        
+        logger.info("All tasks done!")
         return True
     
 if __name__ == "__main__":
-    proxy_pool = [{'http': 'http://54.206.98.132:3128', 'https': 'http://54.206.98.132:3128'}]
+
+    output_path = "data"
+
+    keywords = [
+        "electric slow cooker",
+        "electric cooker multi",
+        "electric food processor",
+        "electric egg cooker",
+        "kettle",
+        "yogurt maker",
+        "air humidifier",
+        "multi cooker",
+        "mini cooker",
+        "slow cooker",
+        "toaster",
+        "mini food warmer",
+        "electric lunchbox",
+        "electric egg blender",
+        "electric whisk",
+        "electric egg mixer",
+        "portable blender",
+        "multifunction pot",
+        "portable kettle",
+        "portable vacuum",
+        "fruit dehydrator",
+        "crepe maker",
+        "frying pan",
+        "electric steamer",
+        "mini oven",
+        "mini heater",
+        "ear thermometer",
+        "air fryer",
+        "induction cooker",
+        "portable sphygmomanometer",
+        "air cooler",
+        "sterilizer",
+    ]
+
+    proxy_pool = [
+        # {'http': 'http://13.236.1.210:3128', 'https': 'http://13.236.1.210:3128'},
+        # {'http': 'http://3.26.16.141:3128', 'https': 'http://3.26.16.141:3128'},
+        # {'http': 'http://3.25.125.251:3128', 'https': 'http://3.25.125.251:3128'},
+    ]
 
     logger.info("Scraping starts!")
-    job = TrademeSearch(["whisk"], proxies = proxy_pool)
-    job.fetch_data()
+    job = TrademeSearch(
+        keywords,
+        # proxies = proxy_pool,
+        output_path = output_path,
+    )
+    job.fetch_all_data()
